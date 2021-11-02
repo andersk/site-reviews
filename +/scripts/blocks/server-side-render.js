@@ -73,11 +73,26 @@ function DefaultErrorResponsePlaceholder({ response, className }) {
     return <Placeholder className={ className }>{ errorMessage }</Placeholder>;
 }
 
-function DefaultLoadingResponsePlaceholder({ className }) {
+function DefaultLoadingResponsePlaceholder({ children, showLoader }) {
     return (
-        <Placeholder className={ className }>
-            <Spinner />
-        </Placeholder>
+        <div style={{ position: 'relative' }}>
+            { showLoader && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        marginTop: '-9px',
+                        marginLeft: '-9px',
+                    }}
+                >
+                    <Spinner />
+                </div>
+            )}
+            <div style={{ opacity: showLoader ? '0.3' : 1 }}>
+                { children }
+            </div>
+        </div>
     );
 }
 
@@ -94,17 +109,19 @@ export default function ServerSideRender(props) {
     } = props;
 
     const isMountedRef = useRef(true);
+    const [showLoader, setShowLoader] = useState(false);
     const fetchRequestRef = useRef();
     const [response, setResponse] = useState(null);
     const prevProps = usePrevious(props);
+    const [isLoading, setIsLoading] = useState(false);
 
     function fetchData() {
         if (!isMountedRef.current) {
             return;
         }
-        if (null !== response) {
-            setResponse(null);
-        }
+        setIsLoading(true);
+
+
         const sanitizedAttributes = (attributes && __experimentalSanitizeBlockAttributes(block, attributes)) ?? null;
         // If httpMethod is 'POST', send the attributes in the request body instead of the URL.
         // This allows sending a larger attributes object than in a GET request, where the attributes are in the URL.
@@ -131,6 +148,11 @@ export default function ServerSideRender(props) {
                         errorMsg: error.message,
                     });
                 }
+            })
+            .finally(() => {
+                if (isMountedRef.current && fetchRequest === fetchRequestRef.current) {
+                    setIsLoading(false);
+                }
             }));
         return fetchRequest;
     }
@@ -156,19 +178,47 @@ export default function ServerSideRender(props) {
         }
     });
 
+    /**
+     * Effect to handle showing the loading placeholder.
+     * Show it only if there is no previous response or
+     * the request takes more than one second.
+     */
+    useEffect(() => {
+        if (!isLoading) {
+            return;
+        }
+        const timeout = setTimeout(() => {
+            setShowLoader(true);
+        }, 1000);
+        return () => clearTimeout(timeout);
+    }, [isLoading]);
+
+    /**
+     * Effect to allow triggering something after render
+     */
     useEffect(() => {
         if (props.onRender) {
-            props.onRender(response, block, attributes);
+            debounce(props.onRender, 250)(response, block, attributes);
         }
     }, [response]);
 
-    if (response === '') {
+    const hasResponse = !! response;
+    const hasEmptyResponse = response === '';
+    const hasError = response?.error;
+
+    if (hasEmptyResponse || !hasResponse) {
         return <EmptyResponsePlaceholder { ...props } />;
-    } else if (!response) {
-        return <LoadingResponsePlaceholder { ...props } />;
-    } else if (response.error) {
+    }
+    if (hasError) {
+
         return <ErrorResponsePlaceholder response={ response } { ...props } />;
     }
-
+    if (isLoading) {
+        return (
+            <LoadingResponsePlaceholder { ...props } showLoader={ showLoader }>
+                { hasResponse && (<RawHTML className={ className }>{ response }</RawHTML>)}
+            </LoadingResponsePlaceholder>
+        );
+    }
     return <RawHTML className={ className }>{ response }</RawHTML>;
 }
